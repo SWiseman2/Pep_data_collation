@@ -232,7 +232,7 @@ def parse_file(file_name):#defining where the data will be extracted from in
                   "NoD": NoV,     #number of days in each indiv crop
                   "NoR": REPs,      #number of reps 
                       #(sequential, if entered rep1+, rep2-, rep3+ would count as 1) - not sure what I meant here....
-                  "year": wsheet["J33"].value.strftime("%Y") #reads in year from pdate 
+                  "year": wsheet["J33"].value.strftime("%Y"), #reads in year from pdate 
                  
                   "pdate": wsheet["J33"].value.strftime("%j"), #reads planting 
                                             #date and converts to Julian Date
@@ -254,42 +254,3 @@ def parse_file(file_name):#defining where the data will be extracted from in
     
     return [crop_info, jdates, gc1rep, gc2rep, gc3rep]
 
-#
-#parse_file("PEP12014040.xlsx")
-#
-#all_crops=[] #trying to count the number of crops but crop is currently empty
-#all_crops.append(crop) #also not sure where it needs to be located in script
-#noc=len(all_crops)
-#
-#TEMP_FILE = 'template.txt'
-#OUTPUT_FILE = 'all_output.txt'
-#
-#def append_to_temp_file(crop):
-#    """
-#    {
-#      'name': value (str)  
-#      'variety' : value (str)
-#      'number of days (nod)': value (int)
-#    }
-#    """
-#    template = '{name}\t{variety}\t{nod}'
-#    with open(TEMP_FILE, 'a') as temp:
-#        temp.write(template.format(**crop))
-#
-#def finalise_output(noc):
-#    with open(OUTPUT_FILE, 'w') as output_file:
-#        output_file.write('{}\n:\n'.format(noc))
-#        with open(TEMP_FILE, 'r') as in_temp:
-#            output_file.write(in_temp.read())
-#
-#def main():
-#    for file_name in os.listdir('.'):
-#        if file_name.endswith('.xlsx'):
-#            print('parsing', file_name)
-#            crop = parse_file(file_name)
-#            append_to_temp_file(crop)
-#    finalise_output()
-#
-#
-#if __name__ == '__main__':
-#    main()
