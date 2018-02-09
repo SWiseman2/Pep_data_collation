@@ -1,0 +1,295 @@
+"Averages crop replicates before data processing
+Outputs descriptive canopy variates in a CSV"
+SET [WORKINGDIRECTORY='f:/PhD/JF active data/GC_prog/development/Parameter testing']
+"*******************************************************************************************************"
+"NoJD = number of dates with GC measurments, NoY = number of years, 
+ NoP = number of plots in a given year, NoPY = sum of number of plots from each year"
+"*******************************************************************************************************"
+Open 'AT2gcParaTest.txt'; Channel=2; File=In; Width=350 "GC raw data"
+text exp, plotname,variety
+Read [Channel=2] exp,plotname,variety,pdate,emdate,smass,sspace,midstems,nrate,year,gc[1...19];\
+	Frepresentation=lab,lab,lab
+Close channel=2
+
+Open 'AT2gc12-16dates.txt'; Channel=2; File=In; Width=350 "no measurements taken in each year"
+Read [Channel=2] dyear,jd[1...19]
+Close channel=2
+
+scalar [value=0]NoY
+scalar [value=0]NoPY
+
+For y=2012...2016 "check range of years in data"
+   calc NoY=NoY+1
+   Subset [dyear.eq.y] jd[1...19]; jdY[y][1...19] 
+
+   Variate [nvalues=19] uJDs[y] "uncut lists of JDs"
+   Equate jdY[y]; uJDs[y]
+   Calc NoJD[y]=18-nmv(uJDs[y]) "number of non-missing values for each year"
+
+   Variate [nvalues=NoJD[y]] JDs[y]
+   Equate uJDs[y]; JDs[y] "only non-missing JDs"
+
+   Subset [year.eq.y] gc[1...NoJD[y]]; gcY[y][1...NoJD[y]] "non-missing GCs"
+
+   Calc NoP[y]=nvalues(gcY[y][1]) "Number of plots per year"
+   Variate [values=1...NoP[y]] pmark[y] "marker to split plots for each year"
+   print NoP[y],pmark[y],NoPY, NoY,NoJD[y]
+   calc NoPY=NoP[y]+NoPY
+   print NoPY
+
+   Subset [year.eq.y] emdate,exp,plotname,variety; EMdateY[y],expY[y],plotnameY[y],varietyY[y]"splitting experiment and variety lists by year"
+
+   For n=1...NoP[y] "plots 1 to end"
+	Subset [pmark[y].eq.n] gcY[y][1...NoJD[y]]; gcI[1...NoJD[y]][n] "split up values for each plot"
+	Append [PGC[n]] gcI[1...NoJD[y]][n] "join values from each plot"
+	"calculating max canopy extent for each crop from raw data"
+	calc cMax[n]=max(PGC[n])
+	"Print cMax[n],y,n, JDs[y],JDs"
+
+	For o=1...NoJD[y]"for each GC reading"
+	   variate [values=1...NoJD[y]]gcmark
+	   subset [gcmark.eq.o] PGC[n];iPGC[n]
+	
+	   "listing the dates when GC is greater than 50%"
+	   if iPGC[n]<50
+	      calc V1[n][o]=0
+	   else
+	      calc V1[n][o]=1
+	   endif
+
+	   variate [nvalues=NoJD[y]] V2
+	   equate old=V1[n]; new=V2
+   	Endfor "o"
+
+	"caluclating approx >50% canopy duration as startimg point for N in Rcycle"
+    	calc [zdz=zero] V3 = JDs[y]/V2
+    	calc JDMin = Min(V3)
+    	calc JDMax = Max(V3)
+    	calc Nest = JDMax - JDMin 
+	print Nest
+
+	"calculating the final GC value"
+	Variate [values=1...NoJD[y]] dmark
+	Subset [condition=dmark.eq.NoJD[y]] old=PGC[n]; new=GCend[y][1...NoJD[y]][n]
+	scalar GCfinal[n]
+	equate old=GCend[][][];new=GCfinal[n]
+
+	Expression e1; Value=!e(F=(cMax[n]/(1+EXP(-B[n]*(JDs[y]-M[n]))))-(cMax[n]/(1+EXP(-D[n]*(JDs[y]-M[n]-N[n])))))
+    	Model PGC[n]; Fitted=F
+    	
+	"seperating emdates, experiment and variety to get individual values for each plot"
+   	subset [condition=pmark[y].eq.n]EMdateY[y],expY[y],varietyY[y];iEMDate[n],iExp[n],iVar[n]
+
+    	calc MS[n]=(iEMDate[n]+19) "Ms = start point for estimating value of M"
+    	RCycle B[n],D[n],M[n],N[n]; Initial=0.250,0.250,MS[n],Nest;
+    	Fitnonlinear [Print=m,s,e,f; Selection=%variance,adjustedr2; Fprob=yes;Calculation=e1]
+    	Rkeep [Statistics=Stat]PGC[n]; Tdeviance=TSS[n]; Deviance=RSS[n];esti=estimateOFsomething
+    	Scalar adjR2[n]
+    	Equate [Oldformat=!(-1,-1,1,-1,-1,-1,-1,-1,-1,-1,-1,-1)]Oldstructure=Stat;Newstructure=adjR2[n]
+	print estimateOFsomething
+	Calc cFitMax[n]=max(F)
+
+	"labelling graph output with plot number and variety"
+	subset [condition = pmark[y].eq.n] expY[y],plotnameY[y],varietyY[y];LabC[n],LabP[n],LabV[n]
+   	Concatenate [Newtext=Cropinfo] Oldtext=LabP[n],' ',LabV[n]
+    "drawing a  graph with a fixed axis"
+    	XAXIS WINDOW=3; TITLE='Ordinal Date'; LOWER=120; upper=300
+    	YAXIS WINDOW=3; TITLE='Ground cover (%)'; LOWER=0; upper=110
+    	Pen 1; symbol=0;join=given; method=monotonic;
+    	pen 2; symbol=13; colour=RGB(30; 144; 255)
+    	DGRAPH [Title=Cropinfo; WINDOW=3; KEYWINDOW=0] F;JDs[y]; pen = 1 "original data points not included, just fitted curve"
+    	dgraph [window=3; screen=keep]PGC[n];JDs[y]; pen=2
+  
+    "equation for calculating time in JD when reached x% GC"
+   	Expression [value=JDem[n]=((log((cMax[n]/1)-1))/(-B[n]))+M[n]]jdem 
+   	Expression [value=JD25[n]=((log((cMax[n]/25)-1))/(-B[n]))+M[n]]jd25 
+    	Expression [value=JD50[n]=((log((cMax[n]/50)-1))/(-B[n]))+M[n]]jd50
+    	Expression [value=JD75[n]=((log((cMax[n]/75)-1))/(-B[n]))+M[n]]jd75
+    	Expression [value=JD90[n]=((log((cMax[n]/90)-1))/(-B[n]))+M[n]]jd90
+    
+    "calculating time in JD when reached x% GC"
+    	RFUNCTION [;se=errem[n];calc=jdem] JDem[n]
+    	RFUNCTION [;se=err25[n];calc=jd25] JD25[n]
+    	RFUNCTION [;se=err50[n];calc=jd50] JD50[n]
+    	RFUNCTION [;se=err75[n];calc=jd75] JD75[n]
+    "to skip calculating the date 90%GC reached when canopy doesn't reach 90%GC"
+    	if cFitMax[n]>=90 
+	    RFUNCTION [;se=err90[n];calc=jd90] JD90[n]
+    	else 
+	    calc JD90[n]=0/0
+    	endif
+
+    "equation for calculating time in JD when reached x% GC during the senescing period"
+    	Expression [value=JD50s[n]=((log((cMax[n]/50)-1))/(D[n]))+(M[n]+N[n])]jd50s
+    	Expression [value=JD75s[n]=((log((cMax[n]/75)-1))/(D[n]))+(M[n]+N[n])]jd75s 
+    	Expression [value=JD90s[n]=((log((cMax[n]/90)-1))/(D[n]))+(M[n]+N[n])]jd90s
+    	Expression [value=JDlast[n]=((log((cMax[n]/GCfinal[n])-1))/(D[n]))+(M[n]+N[n])]jdlast "date of last measurement"
+  
+    "calculating time in JD when reached x% GC as the canopy senesces"
+    	RFUNCTION [;se=err50s[n];calc=jd50s] JD50s[n]  
+    	RFUNCTION [;se=err75s[n];calc=jd75s] JD75s[n]
+    	if cFitMax[n]<90
+	    calc JD90s[n]=0/0
+    	elsif GCfinal[n]>90 "produces a missing value if canopy didn't decline to 90%"
+	    calc JD90s[n]=0/0	
+    	else 
+	    RFUNCTION [;se=err90s[n];calc=jd90s] JD90s[n]
+    	endif
+    	RFUNCTION [;se=errlast[n];calc=jdlast] JDlast[n]
+
+
+	"parameter checking section - absolute deviation of estimated value from measured"
+	scalar lastDay;value=NoJD[y]
+		if lastDay.gt.13 "avoiding duplicating values from JD[13]"
+	   for c=1,5,9,13,lastDay
+		subset [condition = dmark.eq.c] JDs[y],PGC[n];cJDs[c],cPGC[c]
+		Calculate estGC[c]=(cMax[n]/(1+EXP(-B[n]*(cJDs[c]-M[n]))))-(cMax[n]/(1+EXP(-D[n]*(cJDs[c]-M[n]-N[n]))))
+		calc GCdev[c] = abs(cPGC[c]-estGC[c])"/cPGC[c])*100 - to calculate relative deviation"
+		print  c,cJDs[c],cPGC[c],estGC[c],GCdev[c],GCdev[c]
+		if c.eq.1	"storing the deviation for each variate seperately"
+		   calc GC1dev=GCdev[c]
+		elsif c.eq.5
+		   calc GC5dev=GCdev[c]
+		elsif c.eq.9
+		   calc GC9dev=GCdev[c]
+		elsif c.eq.13		   
+		   calc GC13dev=GCdev[c]
+		elsif c.eq.lastDay		   
+		   calc GClastdev=GCdev[c]
+		endif
+	   endfor"c"
+	   print GC1dev,GC5dev,GC9dev,GC13dev,GClastdev
+	   variate [nvalues=1] cGC1dev[n],cGC5dev[n],cGC9dev[n],cGC13dev[n],cGClastdev[n]
+	   equate GC1dev,GC5dev,GC9dev,GC13dev,GClastdev;cGC1dev[n],cGC5dev[n],cGC9dev[n],cGC13dev[n],cGClastdev[n]
+	   print cGC1dev[n],cGC5dev[n],cGC9dev[n],cGC13dev[n],cGClastdev[n]
+	   variate [nvalues=5] NGCdev[n]
+	   equate GCdev;NGCdev[n]
+	   calc meanGCdev[n]=mean(NGCdev[n])
+	   calc rangeGCdev[n]=range(NGCdev[n])
+	   print  NGCdev,meanGCdev[n],rangeGCdev[n]
+	else
+	    for c=1,5,9,13
+		subset [condition = dmark.eq.c] JDs[y],PGC[n];cJDs[c],cPGC[c]
+		Calculate estGC[c]=(cMax[n]/(1+EXP(-B[n]*(cJDs[c]-M[n]))))-(cMax[n]/(1+EXP(-D[n]*(cJDs[c]-M[n]-N[n]))))
+		calc GCdev[c] =abs(cPGC[c]-estGC[c])"/cPGC[c])*100 - to calculate relative deviation"
+		print c,cJDs[c],cPGC[c],estGC[c],GCdev[c]
+	  	if c.eq.1	"storing the deviation for each variate seperately"
+		   calc GC1dev=GCdev[c]
+		elsif c.eq.5
+		   calc GC5dev=GCdev[c]
+		elsif c.eq.9
+		   calc GC9dev=GCdev[c]
+		elsif c.eq.13		   
+		   calc GC13dev=GCdev[c]
+		endif
+		calc GClastdev=0/0
+	   endfor"c"
+	   print GC1dev,GC5dev,GC9dev,GC13dev,GClastdev
+	   variate [nvalues=1] cGC1dev[n],cGC5dev[n],cGC9dev[n],cGC13dev[n],cGClastdev[n]
+	   equate GC1dev,GC5dev,GC9dev,GC13dev,GClastdev;cGC1dev[n],cGC5dev[n],cGC9dev[n],cGC13dev[n],cGClastdev[n]
+	   print cGC1dev[n],cGC5dev[n],cGC9dev[n],cGC13dev[n],cGClastdev[n]
+	   variate [nvalues=4] NGCdev[n]
+	   equate GCdev;NGCdev[n]
+	   calc meanGCdev[n]=mean(NGCdev[n])
+	   calc rangeGCdev[n]=range(NGCdev[n])
+	   print  NGCdev,meanGCdev[n], rangeGCdev[n]
+	endif
+
+    "calculating integrated ground cover)"
+    	scalar InitialArea;value=0
+	FOR JDI=(1...JD75s[n])
+        	Calculate AS[n]=(cMax[n]/(1+EXP(-B[n]*(JDI-M[n]))))-(cMax[n]/(1+EXP(-D[n]*(JDI-M[n]-N[n]))))
+        	Calculate InitialArea=InitialArea+AS[n]
+    	ENDFOR "JDI" 
+    	scalar TotalArea[n];value=InitialArea
+    	variate [nvalues=NoP[y]]igc75[y][n]
+    	equate TotalArea;igc75[y][n]
+        DELETE [redefine=yes] F,V1,V2,V3,LabC[y][n],LabV[y][n]
+    	calc Emdate[n]=MS[n]-19
+    	"variate [values=1...n]CropNo - this deosn't work anymore as not running through n=NoC, but rather NoP which resets each year"
+  
+  endfor "n"
+
+  variate [nvalues=NoP[y]] nIGC75[y]
+  equate igc75[][];nIGC75[y]
+
+  variate [nvalues=NoP[y]] nmeanGCdev[y],nrangeGCdev[y],nGC1dev[y],nGC5dev[y],nGC9dev[y],nGC13dev[y],nGClastdev[y]
+  equate meanGCdev,rangeGCdev,cGC1dev,cGC5dev,cGC9dev,cGC13dev,cGClastdev;\
+	nmeanGCdev[y],nrangeGCdev[y],nGC1dev[y],nGC5dev[y],nGC9dev[y],nGC13dev[y],nGClastdev[y]
+
+  variate [nvalues=NoP[y]] nGCfinal[y] ,nJDlast[y],nEMDate[y]
+  equate GCfinal,JDlast,Emdate;nGCfinal[y],nJDlast[y],nEMDate[y]
+
+  variate [nvalues=NoP[y]]bpar[y],dpar[y],mpar[y],npar[y]
+  equate B,D,M,N; bpar[y],dpar[y],mpar[y],npar[y]
+
+  Variate [NValues=NoP[y]]JDemR[y],JD25R[y],JD50R[y],JD75R[y],JD90R[y]"R=average of reps - no longer relevant, but keeping"
+  Equate JDem,JD25,JD50,JD75,JD90;JDemR[y],JD25R[y],JD50R[y],JD75R[y],JD90R[y]
+
+  Variate [NValues=NoP[y]]JD50Rs[y],JD75Rs[y],JD90Rs[y]"Rs=reps senescence"
+  Equate JD50s,JD75s,JD90s;JD50Rs[y],JD75Rs[y],JD90Rs[y]
+ 
+  variate [nvalues=NoP[y]]nCMax[y],nCFMax[y],nAdjR2[y]
+  equate cMax,cFitMax,adjR2;nCMax[y],nCFMax[y],nAdjR2[y]
+
+endfor "y"  
+
+variate [values=1...NoPY] CropNo "though it is really plot number from all years, keeping old name"
+variate [nvalues=NoPY]IGC75
+equate nIGC75;IGC75
+
+variate [nvalues=NoPY]EMDates,PDates,CMax,CFMax,AdjR2,EndGC
+equate nEMDate,pdate,nCMax,nCFMax,nAdjR2,nGCfinal;EMDates,PDates,CMax,CFMax,AdjR2,EndGC
+
+variate [nvalues=NoPY] meanGCDev,rangeGCDev,GC1Dev,GC5Dev,GC9Dev,GC13Dev,GClastDev
+equate nmeanGCdev,nrangeGCdev,nGC1dev,nGC5dev,nGC9dev,nGC13dev,nGClastdev;\
+	meanGCDev,rangeGCDev,GC1Dev,GC5Dev,GC9Dev,GC13Dev,GClastDev
+
+Variate [nvalues=NoPY] NRate,SeedMass,SeedSpacing,MidStems,Year"Crop details, collecting for printing"
+equate nrate,smass,sspace,midstems,year;NRate,SeedMass,SeedSpacing,MidStems,Year
+
+Variate [nvalues="6"NoPY]Bpar,Dpar,Mpar,Npar
+equate bpar,dpar,mpar,npar; Bpar,Dpar,Mpar,Npar
+  
+Variate [NValues="9"NoPY]JDemr,JD25r,JD50r,JD75r,JD90r"R=average of reps - no longer relevant, but keeping"
+Equate JDemR,JD25R,JD50R,JD75R,JD90R;JDemr,JD25r,JD50r,JD75r,JD90r
+
+Variate [NValues="9"NoPY]JD50rs,JD75rs,JD90rs,JDend"Rs=reps senescence"
+Equate JD50Rs,JD75Rs,JD90Rs,nJDlast;JD50rs,JD75rs,JD90rs,JDend
+
+text [nvalues=NoPY] Experiment,PlotName,Variety
+Equate exp,plotname;Experiment,PlotName
+Equate variety;Variety
+
+"rate of canopy expansion"
+Calc GCRate2575=50/(JD75r-JD25r)
+
+"rate of canopy senescence"
+Calc GCRate9050=40/(JD90rs-JD50rs)
+
+"canopy durations"
+Calc GCDur90=JD90rs-JD90r
+
+"time intervals"
+calc TiE25=JD25r-EMDates"emergence-25%GC"
+calc TiE50=JD50r-EMDates"emergence-25%GC"
+
+TEXT OutFile; VALUE='18.1.23_CanVarJF_AT2paraTest.csv' 
+
+print CropNo,Experiment,PlotName,\
+	Variety,PDates,EMDates,SeedMass,SeedSpacing,MidStems,NRate,\
+	Year,CMax,CFMax,AdjR2,IGC75,TiE25,TiE50,GCRate2575,GCRate9050,\
+	GCDur90,EndGC,JDend,JDemr,JD25r,JD50r,JD75r,JD90r,JD50rs,JD75rs,JD90rs,\
+	CMax,Bpar,Dpar,Mpar,Npar,meanGCDev,rangeGCDev,GC1Dev,GC5Dev,GC9Dev,\
+	GC13Dev,GClastDev
+
+Export [Outfile=OutFile; CSVOPTIONS=noquotes] CropNo,Experiment,PlotName,\
+	Variety,PDates,EMDates,SeedMass,SeedSpacing,MidStems,NRate,\
+	Year,CMax,CFMax,AdjR2,IGC75,TiE25,TiE50,GCRate2575,GCRate9050,\
+	GCDur90,EndGC,JDend,JDemr,JD25r,JD50r,JD75r,JD90r,JD50rs,JD75rs,JD90rs,\
+	CMax,Bpar,Dpar,Mpar,Npar,meanGCDev,rangeGCDev,GC1Dev,GC5Dev,GC9Dev,\
+	GC13Dev,GClastDev
+
+
+
+stop
